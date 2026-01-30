@@ -1,6 +1,4 @@
 /*
-
-/*
  *
  *  mysizex   :   local x-extendion of your patch
  *  mysizey   :   local y-extension of your patch
@@ -10,7 +8,7 @@
 
 #include "stencil_template_serial.h"
 //#include <types.h>
-
+typedef unsigned int uint;
 
 int dump ( const double *, const uint [2], const char *, double *, double * );
 
@@ -22,10 +20,10 @@ int main(int argc, char **argv)
 
   int  Niterations;
   int  periodic;
-  int  S[2];
+  uint S[2];
   
   int     Nsources;
-  int    *Sources;
+  uint   *Sources;
   double  energy_per_source;
 
   double *planes[2];
@@ -84,7 +82,7 @@ int main(int argc, char **argv)
   /* get final heat in the system */
   
   double system_heat;
-  get_total_energy( S, planes[current], &system_heat);
+  get_total_energy( S, planes[!current], &system_heat);
 
   printf("injected energy is %g, system energy is %g\n",
 	 injected_heat, system_heat );
@@ -110,21 +108,21 @@ int main(int argc, char **argv)
 
 
 
-int memory_allocate ( const int [2],
+int memory_allocate ( const uint [2],
 		      double ** );
 
 
 int initialize_sources( uint      [2],
 			int       ,
-			int     ** );
+			uint     ** );
 
 int initialize ( int      argc,                // the argc from command line
 		 char   **argv,                // the argv from command line
-		 int     *S,                   // two-uint array defining the x,y dimensions of the grid
+		 uint     *S,                   // two-uint array defining the x,y dimensions of the grid
 		 int     *periodic,            // periodic-boundary tag
 		 int     *Niterations,         // how many iterations
 		 int     *Nsources,            // how many heat sources
-		 int    **Sources,             // the array of heat sources
+		 uint    **Sources,             // the array of heat sources
 		 double  *energy_per_source,   // how much heat per source
 		 double **planes,
 		 int     *output_energy_at_steps,
@@ -205,23 +203,49 @@ int initialize ( int      argc,                // the argc from command line
     if ( opt == -1 )
       break;
   }
-
+  // injection frequency
   if ( freq == 0 )
-    *injection_frequency = 1;
+    *injection_frequency = 1;  // inject at every step
   else
     {
       freq = (freq > 1.0 ? 1.0 : freq );
-      *injection_frequency = freq * *Niterations;
+      *injection_frequency = freq * *Niterations; // inject at this frequency, e.g. 1 means at every step
     }
 
   // ··································································
-  /*
-   * here we should check for all the parms being meaningful
-   *
-   */
+  // here we should check for all the parameters being meaningful
+  if ( S[_x_] < 1 || S[_y_] < 1 )
+    {
+      printf("error: invalid grid size\n");
+      return 1;
+    }
 
-  // ...
-  
+  if ( *Nsources < 1 )
+    {
+      printf("error: invalid number of heat sources\n");
+      return 1;
+    }
+
+  if ( *Niterations < 1 )
+    {
+      printf("error: invalid number of iterations\n");
+      return 1;
+    }
+
+  if ( *energy_per_source < 0 )
+    {
+      printf("error: invalid energy per source\n");
+      return 1;
+    }
+
+  if ( *injection_frequency < 1 || *injection_frequency > *Niterations )
+    {
+      printf("error: invalid injection frequency\n");
+      return 1;
+    }
+
+
+
 
   // ··································································
   // allocate the needed memory
@@ -243,7 +267,7 @@ int initialize ( int      argc,                // the argc from command line
 }
 
 
-int memory_allocate ( const int      size[2],
+int memory_allocate ( const uint      size[2],
 		            double **planes_ptr )
 /*
  * allocate the memory for the planes
@@ -273,16 +297,16 @@ int memory_allocate ( const int      size[2],
 
 int initialize_sources( uint      size[2],
 			int       Nsources,
-			int     **Sources )
+			uint     **Sources )
 /*
  * randomly spread heat sources
  */
 {
-  *Sources = (int*)malloc( Nsources * 2 *sizeof(uint) );
+  *Sources = (uint*)malloc( Nsources * 2 *sizeof(uint) );
   for ( int s = 0; s < Nsources; s++ )
   {
-    (*Sources)[s*2] = 1+ lrand48() % size[_x_];
-    (*Sources)[s*2+1] = 1+ lrand48() % size[_y_];
+    (*Sources)[s*2] = 1+ rand() % size[_x_];
+    (*Sources)[s*2+1] = 1+ rand() % size[_y_];
   }
 
   return 0;
@@ -290,7 +314,7 @@ int initialize_sources( uint      size[2],
 
 
 
-int memory_release ( double *data, int *sources )
+int memory_release ( double *data, uint *sources )
   
 {
   if( data != NULL )
@@ -347,5 +371,6 @@ int dump ( const double *data, const uint size[2], const char *filename, double 
 
   else return 1;
   
+  return 0;
 }
 

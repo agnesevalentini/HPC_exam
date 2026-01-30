@@ -406,7 +406,7 @@ int initialize ( MPI_Comm *Comm,
   // ··································································
   // allocate the needed memory
   //
-  ret = memory_allocate( plans, ... 
+  ret = memory_allocate( planes, ... 
   
 
   // ··································································

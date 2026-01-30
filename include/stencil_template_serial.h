@@ -39,34 +39,34 @@ typedef unsigned int uint;
 
 int initialize ( int      ,
 		 char   **,
-		 int    *,
+		 uint    *,
 		 int     *,
 		 int     *,
 		 int     *,
-		 int   **,
+		 uint   **,
 		 double  *,
 		 double **,
                  int     *,
                  int     *
 		 );
 
-int memory_release ( double *, int * );
+int memory_release ( double *, uint * );
 
 
 extern int inject_energy ( const  int,
                            const int    ,
-			   const int   *,
+			   const uint   *,
 			   const double  ,
-			   const int    [2],
+			   const uint    [2],
                                  double * );
 
 extern int update_plane ( const int       ,
-			  const int    [2],
+			  const uint    [2],
 			  const double   *,
 		                double   * );
 
 
-extern int get_total_energy( const int     [2],
+extern int get_total_energy( const uint     [2],
                              const double *,
                              double * );
 
@@ -77,9 +77,9 @@ extern int get_total_energy( const int     [2],
 
 inline int inject_energy ( const int     periodic,
                            const int     Nsources,
-			   const int    *Sources,
+			   const uint    *Sources,
 			   const double  energy,
-			   const int     mysize[2],
+			   const uint     mysize[2],
                            double *plane )
 {
    #define IDX( i, j ) ( (j)*(mysize[_x_]+2) + (i) )    // since the matrix is stored with an array we have to 
@@ -110,7 +110,7 @@ inline int inject_energy ( const int     periodic,
 
 
 inline int update_plane ( const int     periodic, 
-                          const int     size[2],
+                          const uint     size[2],
 			  const double *old    ,
                                 double *new    )
 /*
@@ -219,7 +219,7 @@ inline int update_plane ( const int     periodic,
 
  
 
-inline int get_total_energy( const int     size[2],
+inline int get_total_energy( const uint     size[2],
                              const double *plane,
                                    double *energy )
 /*
