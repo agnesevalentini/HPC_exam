@@ -287,7 +287,7 @@ int memory_allocate ( const uint      size[2],
   unsigned int bytes = (size[_x_]+2)*(size[_y_]+2);
 
   planes_ptr[OLD] = (double*)malloc( 2*bytes*sizeof(double) );
-  memset ( planes_ptr[OLD], 0, 2*bytes*sizeof(double) ); // allocating memory for two planes
+  memset ( planes_ptr[OLD], 0, 2*bytes*sizeof(double) ); // allocating memory for two planes   
   planes_ptr[NEW] = planes_ptr[OLD] + bytes;
       
   return 0;

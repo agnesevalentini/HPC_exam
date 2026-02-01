@@ -86,7 +86,37 @@ int main(int argc, char **argv)
       /* -------------------------------------- */
 
       // [A] fill the buffers, and/or make the buffers' pointers pointing to the correct position
-      
+      uint sizex = planes[current].size[_x_] + 2;
+      uint sizey = planes[current].size[_y_] + 2;
+      double *data = planes[current].data;
+
+      #define IDX(i, j) ((j) * sizex + (i))
+
+      // For NORTH: send top row (j=1), receive into j=0
+      // For SOUTH: send bottom row (j=sizey-2), receive into j=sizey-1
+      // For EAST: send rightmost column (i=sizex-2), receive into i=sizex-1
+      // For WEST: send leftmost column (i=1), receive into i=0
+
+      // NORTH and SOUTH buffers can point directly to the rows
+      buffers[SEND][NORTH] = &data[IDX(0, 1)];  // first internal row
+      buffers[SEND][SOUTH] = &data[IDX(0, sizey - 2)];  // last internal row
+
+      // EAST and WEST need actual buffers (data is strided)
+      // Fill EAST buffer (rightmost column)
+      if (neighbours[EAST] != MPI_PROC_NULL) {
+          for (uint j = 0; j < sizey; j++) {
+              buffers[SEND][EAST][j] = data[IDX(sizex - 2, j)];
+          }
+      }
+
+      // Fill WEST buffer (leftmost column)
+      if (neighbours[WEST] != MPI_PROC_NULL) {
+          for (uint j = 0; j < sizey; j++) {
+              buffers[SEND][WEST][j] = data[IDX(1, j)];
+          }
+      }
+
+      #undef IDX
     
       // [B] perform the halo communications
       //     (1) use Send / Recv

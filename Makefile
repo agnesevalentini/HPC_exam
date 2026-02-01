@@ -33,8 +33,3 @@ run-parallel: $(PARALLEL_OUT)
 	export OMP_PLACES=cores
 	./$(PARALLEL_OUT) -v 0 -o 0 -p 1 -x 100 -y 100 -n 5
 	
-clean:
-	rm -f $(SERIAL_OUT) $(PARALLEL_OUT)
-	rm -f *.bin
-	rm -f *.csv
-

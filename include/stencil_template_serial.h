@@ -111,7 +111,7 @@ inline int inject_energy ( const int     periodic,
 
 inline int update_plane ( const int     periodic, 
                           const uint     size[2],
-			  const double *old    ,
+			            const double *old    ,
                                 double *new    )
 /*
  * calculate the new energy values
