@@ -1,5 +1,5 @@
 
-# Compilers
+# Compilers for wsl
 CC = gcc
 MPICC = mpicc
 ARCH ?= native
@@ -22,14 +22,13 @@ $(SERIAL_OUT): $(SERIAL_SRC)
 	$(CC) $(CFLAGS) $(SERIAL_SRC) -o $(SERIAL_OUT)
 
 $(PARALLEL_OUT): $(PARALLEL_SRC)
-	$(MPICC) $(MPI_FLAGS) $(PARALLEL_SRC) -o $(PARALLEL_OUT)
+	$(MPICC) $(MPI_FLAGS) $(PARALLEL_SRC) -o $(PARALLEL_OUT) -lm
 
-run-serial: $(SERIAL_OUT)
-	./$(SERIAL_OUT) -f 0 -e 4 -o 0 -p 1 -x 100 -y 100 -n 5
+#run-serial: $(SERIAL_OUT)
+#	./$(SERIAL_OUT) -f 0 -e 4 -o 0 -p 1 -x 100 -y 100 -n 5
 
-run-parallel: $(PARALLEL_OUT)
-	export OMP_NUM_THREADS=1
-	export OMP_PROC_BIND=close
-	export OMP_PLACES=cores
-	./$(PARALLEL_OUT) -v 0 -o 0 -p 1 -x 100 -y 100 -n 5
-	
+#run-parallel: $(PARALLEL_OUT)
+#	mpirun -n 4 ./$(PARALLEL_OUT) -e 4 -o 1 -p 0 -x 100 -y 100 -n 5 -v 1
+
+clean:
+	rm -f $(SERIAL_OUT) $(PARALLEL_OUT) *.o

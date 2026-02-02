@@ -19,7 +19,7 @@ int main(int argc, char **argv)
 {
   MPI_Comm myCOMM_WORLD;
   int  Rank, Ntasks;
-  uint neighbours[4];
+  int neighbours[4];
 
   int  Niterations;
   int  periodic;
@@ -76,9 +76,6 @@ int main(int argc, char **argv)
   for (int iter = 0; iter < Niterations; ++iter)
     
     {
-      
-      MPI_Request reqs[8];
-      
       /* new energy from sources */
       inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, &planes[current], N );
 
@@ -98,8 +95,10 @@ int main(int argc, char **argv)
       // For WEST: send leftmost column (i=1), receive into i=0
 
       // NORTH and SOUTH buffers can point directly to the rows
-      buffers[SEND][NORTH] = &data[IDX(0, 1)];  // first internal row
-      buffers[SEND][SOUTH] = &data[IDX(0, sizey - 2)];  // last internal row
+      buffers[SEND][NORTH] = &data[IDX(0, 1)];        // first internal row to send
+      buffers[RECV][NORTH] = &data[IDX(0, 0)];        // top halo row to receive into
+      buffers[SEND][SOUTH] = &data[IDX(0, sizey - 2)];  // last internal row to send
+      buffers[RECV][SOUTH] = &data[IDX(0, sizey - 1)];  // bottom halo row to receive into
 
       // EAST and WEST need actual buffers (data is strided)
       // Fill EAST buffer (rightmost column)
@@ -120,10 +119,64 @@ int main(int argc, char **argv)
     
       // [B] perform the halo communications
       //     (1) use Send / Recv
-      //     (2) use Isend / Irecv
-      //         --> can you overlap communication and computation in this way?
+      //     (2) use Isend / Irecvc --> can you overlap communication and computation in this way?
+      // blocking version, using Send recv
+
+      // NORTH-SOUTH exchanges (rows are contiguous, can use direct pointers)
+      // Only communicate if at least one neighbor exists
+      if (neighbours[NORTH] != MPI_PROC_NULL || neighbours[SOUTH] != MPI_PROC_NULL) {
+          // Ensure we have valid pointers even if neighbor is NULL
+          double *send_north = (neighbours[NORTH] != MPI_PROC_NULL) ? buffers[SEND][NORTH] : buffers[SEND][SOUTH];
+          double *recv_south = (neighbours[SOUTH] != MPI_PROC_NULL) ? buffers[RECV][SOUTH] : buffers[RECV][NORTH];
+          double *send_south = (neighbours[SOUTH] != MPI_PROC_NULL) ? buffers[SEND][SOUTH] : buffers[SEND][NORTH];
+          double *recv_north = (neighbours[NORTH] != MPI_PROC_NULL) ? buffers[RECV][NORTH] : buffers[RECV][SOUTH];
+          
+          MPI_Sendrecv(send_north, sizex, MPI_DOUBLE, neighbours[NORTH], 0,
+                      recv_south, sizex, MPI_DOUBLE, neighbours[SOUTH], 0,
+                      myCOMM_WORLD, MPI_STATUS_IGNORE);
+
+          MPI_Sendrecv(send_south, sizex, MPI_DOUBLE, neighbours[SOUTH], 1,
+                      recv_north, sizex, MPI_DOUBLE, neighbours[NORTH], 1,
+                      myCOMM_WORLD, MPI_STATUS_IGNORE);
+      }
+
+      // EAST-WEST exchanges (columns need explicit buffers)
+      // Only communicate if at least one neighbor exists
+      if (neighbours[EAST] != MPI_PROC_NULL || neighbours[WEST] != MPI_PROC_NULL) {
+          // Ensure we have valid pointers even if neighbor is NULL
+          double *send_east = (neighbours[EAST] != MPI_PROC_NULL) ? buffers[SEND][EAST] : buffers[SEND][WEST];
+          double *recv_west = (neighbours[WEST] != MPI_PROC_NULL) ? buffers[RECV][WEST] : buffers[RECV][EAST];
+          double *send_west = (neighbours[WEST] != MPI_PROC_NULL) ? buffers[SEND][WEST] : buffers[SEND][EAST];
+          double *recv_east = (neighbours[EAST] != MPI_PROC_NULL) ? buffers[RECV][EAST] : buffers[RECV][WEST];
+          
+          MPI_Sendrecv(send_east, sizey, MPI_DOUBLE, neighbours[EAST], 2,
+                      recv_west, sizey, MPI_DOUBLE, neighbours[WEST], 2,
+                      myCOMM_WORLD, MPI_STATUS_IGNORE);
+
+          MPI_Sendrecv(send_west, sizey, MPI_DOUBLE, neighbours[WEST], 3,
+                      recv_east, sizey, MPI_DOUBLE, neighbours[EAST], 3,
+                      myCOMM_WORLD, MPI_STATUS_IGNORE);
+      }
       
       // [C] copy the haloes data
+      #define IDX(i, j) ((j) * sizex + (i))
+
+      // NORTH and SOUTH: data was received directly into halo rows (no copy needed)
+      
+      // EAST and WEST: copy from buffers into halo columns
+      if (neighbours[EAST] != MPI_PROC_NULL) {
+          for (uint j = 0; j < sizey; j++) {
+              data[IDX(sizex - 1, j)] = buffers[RECV][EAST][j];
+          }
+      }
+
+      if (neighbours[WEST] != MPI_PROC_NULL) {
+          for (uint j = 0; j < sizey; j++) {
+              data[IDX(0, j)] = buffers[RECV][WEST][j];
+          }
+      }
+
+      #undef IDX
 
       /* --------------------------------------  */
       /* update grid points */
@@ -222,8 +275,10 @@ int initialize ( MPI_Comm *Comm,
     // manage the situation
   }
 
-  planes[OLD].size[0] = planes[OLD].size[0] = 0;
-  planes[NEW].size[0] = planes[NEW].size[0] = 0;
+  planes[OLD].size[0] = 0;
+  planes[OLD].size[1] = 0;
+  planes[NEW].size[0] = 0;
+  planes[NEW].size[1] = 0;
   
   for ( int i = 0; i < 4; i++ )
     neighbours[i] = MPI_PROC_NULL;
@@ -275,6 +330,8 @@ int initialize ( MPI_Comm *Comm,
 		      "-E    how many energy sources on the plate [1.0]\n"
 		      "-n    how many iterations [1000]\n"
 		      "-p    whether periodic boundaries applies  [0 = false]\n\n"
+          "-o    whether to output energy statistics at each step [0 = false]\n"
+          "-v    verbosity level [0]\n\n"
 		      );
 	    halt = 1; }
 	    break;
@@ -436,7 +493,11 @@ int initialize ( MPI_Comm *Comm,
   // ··································································
   // allocate the needed memory
   //
-  ret = memory_allocate( planes, ... 
+  ret = memory_allocate(neighbours, mysize, buffers, planes );
+  if ( ret != 0 ) {
+    printf("Task %d: memory allocation failed\n", Me);
+    return ret;
+  }
   
 
   // ··································································
@@ -500,13 +561,13 @@ int initialize_sources( int       Me,
 
 {
 
-  srand48(time(NULL) ^ Me);
+  srand(time(NULL) ^ Me);
   int *tasks_with_sources = (int*)malloc( Nsources * sizeof(int) );
   
   if ( Me == 0 )
     {
       for ( int i = 0; i < Nsources; i++ )
-	tasks_with_sources[i] = (int)lrand48() % Ntasks;
+	tasks_with_sources[i] = rand() % Ntasks;
     }
   
   MPI_Bcast( tasks_with_sources, Nsources, MPI_INT, 0, *Comm );
@@ -521,8 +582,8 @@ int initialize_sources( int       Me,
       vec2_t * restrict helper = (vec2_t*)malloc( nlocal * sizeof(vec2_t) );      
       for ( int s = 0; s < nlocal; s++ )
 	{
-	  helper[s][_x_] = 1 + lrand48() % mysize[_x_];
-	  helper[s][_y_] = 1 + lrand48() % mysize[_y_];
+	  helper[s][_x_] = 1 + rand() % mysize[_x_];
+	  helper[s][_y_] = 1 + rand() % mysize[_y_];
 	}
 
       *Sources = helper;
@@ -556,17 +617,17 @@ int memory_allocate ( const int       *neighbours  ,
 
       Then, the "NEW" will be treated as "OLD" and viceversa.
 
-      These two memory regions are indexed by *plate_ptr:
+      These two memory regions are indexed by *plane_ptr:
 
-      planew_ptr[0] ==> the "OLD" region
-      plamew_ptr[1] ==> the "NEW" region
+      plane_ptr[0] ==> the "OLD" region
+      plane_ptr[1] ==> the "NEW" region
 
 
       (ii) --- communications
 
       you may need two buffers (one for sending and one for receiving)
       for each one of your neighnours, that are at most 4:
-      north, south, east amd west.      
+      north, south, east and west.      
 
       To them you need to communicate at most mysizex or mysizey
       daouble data.
@@ -584,13 +645,13 @@ int memory_allocate ( const int       *neighbours  ,
   if (planes_ptr == NULL )
     // an invalid pointer has been passed
     // manage the situation
-    ;
+    return 1;
 
 
   if (buffers_ptr == NULL )
     // an invalid pointer has been passed
     // manage the situation
-    ;
+    return 1;
     
 
   // ··················································
@@ -601,14 +662,12 @@ int memory_allocate ( const int       *neighbours  ,
 
   planes_ptr[OLD].data = (double*)malloc( frame_size * sizeof(double) );
   if ( planes_ptr[OLD].data == NULL )
-    // manage the malloc fail
-    ;
+    goto cleanup_and_fail;
   memset ( planes_ptr[OLD].data, 0, frame_size * sizeof(double) );
 
   planes_ptr[NEW].data = (double*)malloc( frame_size * sizeof(double) );
   if ( planes_ptr[NEW].data == NULL )
-    // manage the malloc fail
-    ;
+    goto cleanup_and_fail;
   memset ( planes_ptr[NEW].data, 0, frame_size * sizeof(double) );
 
 
@@ -627,22 +686,68 @@ int memory_allocate ( const int       *neighbours  ,
   // also for north and south communications
 
   // ··················································
-  // allocate buffers
+  // allocate buffers for EAST and WEST (columns need explicit copying)
   //
 
+  // Allocate EAST buffers (both send and receive)
+  if ( neighbours[EAST] != MPI_PROC_NULL )
+    {
+      buffers_ptr[SEND][EAST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
+      if ( buffers_ptr[SEND][EAST] == NULL )
+        goto cleanup_and_fail;
+      
+      buffers_ptr[RECV][EAST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
+      if ( buffers_ptr[RECV][EAST] == NULL )
+        goto cleanup_and_fail;
+    }
 
+  // Allocate WEST buffers (both send and receive)
+  if ( neighbours[WEST] != MPI_PROC_NULL )
+    {
+      buffers_ptr[SEND][WEST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
+      if ( buffers_ptr[SEND][WEST] == NULL )
+        goto cleanup_and_fail;
+      
+      buffers_ptr[RECV][WEST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
+      if ( buffers_ptr[RECV][WEST] == NULL )
+        goto cleanup_and_fail;
+    }
 
+  // NORTH and SOUTH buffers will be set to point directly to the data
+  // (no allocation needed, just pointers set during communication)
+  buffers_ptr[SEND][NORTH] = NULL;
+  buffers_ptr[RECV][NORTH] = NULL;
+  buffers_ptr[SEND][SOUTH] = NULL;
+  buffers_ptr[RECV][SOUTH] = NULL;
 
   // ··················································
 
   
   return 0;
+
+cleanup_and_fail:
+  // Free all previously allocated memory before returning error
+  if ( planes_ptr[OLD].data != NULL )
+    free(planes_ptr[OLD].data);
+  if ( planes_ptr[NEW].data != NULL )
+    free(planes_ptr[NEW].data);
+  
+  if ( buffers_ptr[SEND][EAST] != NULL )
+    free(buffers_ptr[SEND][EAST]);
+  if ( buffers_ptr[RECV][EAST] != NULL )
+    free(buffers_ptr[RECV][EAST]);
+  if ( buffers_ptr[SEND][WEST] != NULL )
+    free(buffers_ptr[SEND][WEST]);
+  if ( buffers_ptr[RECV][WEST] != NULL )
+    free(buffers_ptr[RECV][WEST]);
+  
+  return 1;
 }
 
 
 
- int memory_release ( plane_t   *planes,
-		      ....
+ int memory_release ( buffers_t *buffers,
+		      plane_t   *planes
 		     )
   
 {
@@ -654,6 +759,21 @@ int memory_allocate ( const int       *neighbours  ,
       
       if ( planes[NEW].data != NULL )
 	free (planes[NEW].data);
+    }
+
+  if ( buffers != NULL )
+    {
+      // Free EAST buffers
+      if ( buffers[SEND][EAST] != NULL )
+	free (buffers[SEND][EAST]);
+      if ( buffers[RECV][EAST] != NULL )
+	free (buffers[RECV][EAST]);
+      
+      // Free WEST buffers
+      if ( buffers[SEND][WEST] != NULL )
+	free (buffers[SEND][WEST]);
+      if ( buffers[RECV][WEST] != NULL )
+	free (buffers[RECV][WEST]);
     }
 
       
@@ -674,8 +794,10 @@ int output_energy_stat ( int step, plane_t *plane, double budget, int Me, MPI_Co
   if ( Me == 0 )
     {
       if ( step >= 0 )
-	printf(" [ step %4d ] ", step ); fflush(stdout);
-
+	{
+	  printf(" [ step %4d ] ", step );
+	  fflush(stdout);
+	}
       
       printf( "total injected energy is %g, "
 	      "system energy is %g "

@@ -78,7 +78,7 @@ int initialize ( MPI_Comm *,
                  buffers_t * );
 
 
-int memory_release (plane_t   * );
+int memory_release (buffers_t *, plane_t *);
 
 
 int output_energy_stat ( int      ,
@@ -113,13 +113,25 @@ inline int inject_energy ( const int      periodic,
                     if ( (N[_x_] == 1)  )
                         {
                             // propagate the boundaries if needed
-                            // check the serial version
+                            // Only one task in x-direction, so wrap left-right within this task
+                            // If source is at left edge, copy to right halo
+                            if (x == 1)
+                                data[ IDX(plane->size[_x_], y) ] = data[ IDX(1, y) ];
+                            // If source is at right edge, copy to left halo
+                            if (x == plane->size[_x_])
+                                data[ IDX(0, y) ] = data[ IDX(plane->size[_x_], y) ];
                         }
                     
                     if ( (N[_y_] == 1) )
                         {
                             // propagate the boundaries if needed
-                            // check the serial version
+                            // Only one task in y-direction, so wrap top-bottom within this task
+                            // If source is at top edge, copy to bottom halo
+                            if (y == 1)
+                                data[ IDX(x, plane->size[_y_]) ] = data[ IDX(x, 1) ];
+                            // If source is at bottom edge, copy to top halo
+                            if (y == plane->size[_y_])
+                                data[ IDX(x, 0) ] = data[ IDX(x, plane->size[_y_]) ];
                         }
                 }                
         }
@@ -140,7 +152,7 @@ inline int update_plane ( const int      periodic,
     
 {
     uint register fxsize = oldplane->size[_x_]+2;
-    uint register fysize = oldplane->size[_y_]+2;
+
     
     uint register xsize = oldplane->size[_x_];
     uint register ysize = oldplane->size[_y_];
@@ -159,6 +171,7 @@ inline int update_plane ( const int      periodic,
     double * restrict old = oldplane->data;
     double * restrict new = newplane->data;
     
+    #pragma omp parallel for collapse(2)
     for (uint j = 1; j <= ysize; j++)
         for ( uint i = 1; i <= xsize; i++)
             {
@@ -184,13 +197,23 @@ inline int update_plane ( const int      periodic,
             if ( N[_x_] == 1 )
                 {
                     // propagate the boundaries as needed
-                    // check the serial version
+                    // Only one task in x-direction: copy left column to right halo and vice versa
+                    for (uint j = 0; j < ysize + 2; j++)
+                        {
+                            new[ IDX(xsize+1, j) ] = new[ IDX(1, j) ];      // right halo = left column
+                            new[ IDX(0, j) ] = new[ IDX(xsize, j) ];        // left halo = right column
+                        }
                 }
   
             if ( N[_y_] == 1 ) 
                 {
                     // propagate the boundaries as needed
-                    // check the serial version
+                    // Only one task in y-direction: copy top row to bottom halo and vice versa
+                    for (uint i = 0; i < xsize + 2; i++)
+                        {
+                            new[ IDX(i, ysize+1) ] = new[ IDX(i, 1) ];      // bottom halo = top row
+                            new[ IDX(i, 0) ] = new[ IDX(i, ysize) ];        // top halo = bottom row
+                        }
                 }
         }
 
@@ -228,6 +251,7 @@ inline int get_total_energy( plane_t *plane,
     //       (ii) ask the compiler to do it
     // for instance
     // #pragma GCC unroll 4
+    #pragma omp parallel for collapse(2) reduction(+:totenergy)
     for ( int j = 1; j <= ysize; j++ )
         for ( int i = 1; i <= xsize; i++ )
             totenergy += data[ IDX(i, j) ];
