@@ -11,6 +11,8 @@
 #include "stencil_template_parallel.h"
 
 
+// TODO: add different times of communication and computation with MPI_Wtime() to check the overlap of communication and computation 
+// change from blocking to non blocking and see what happens to the performance
 
 // ------------------------------------------------------------------
 // ------------------------------------------------------------------
@@ -73,6 +75,20 @@ int main(int argc, char **argv)
   int current = OLD;
   double t1 = MPI_Wtime();   /* take wall-clock time */
   
+  // Timing variables for performance analysis
+  double total_communication_time = 0.0; // total time spent in communication
+  double total_computation_time = 0.0; // total time spent in computation
+  double total_waiting_time = 0.0; // time spent for communication to complete
+  
+  // MPI Request arrays for non-blocking communication
+  MPI_Request send_requests[4];
+  MPI_Request recv_requests[4];
+  int num_send_requests = 0;
+  int num_recv_requests = 0;
+  
+  // Save initial state (iteration 0)
+  save_grid_snapshot(0, &planes[current], S, N, Rank, &myCOMM_WORLD);
+  
   for (int iter = 0; iter < Niterations; ++iter)
     
     {
@@ -118,52 +134,85 @@ int main(int argc, char **argv)
       #undef IDX
     
       // [B] perform the halo communications
-      //     (1) use Send / Recv
-      //     (2) use Isend / Irecvc --> can you overlap communication and computation in this way?
-      // blocking version, using Send recv
-
-      // NORTH-SOUTH exchanges (rows are contiguous, can use direct pointers)
-      // Only communicate if at least one neighbor exists
-      if (neighbours[NORTH] != MPI_PROC_NULL || neighbours[SOUTH] != MPI_PROC_NULL) {
-          // Ensure we have valid pointers even if neighbor is NULL
-          double *send_north = (neighbours[NORTH] != MPI_PROC_NULL) ? buffers[SEND][NORTH] : buffers[SEND][SOUTH];
-          double *recv_south = (neighbours[SOUTH] != MPI_PROC_NULL) ? buffers[RECV][SOUTH] : buffers[RECV][NORTH];
-          double *send_south = (neighbours[SOUTH] != MPI_PROC_NULL) ? buffers[SEND][SOUTH] : buffers[SEND][NORTH];
-          double *recv_north = (neighbours[NORTH] != MPI_PROC_NULL) ? buffers[RECV][NORTH] : buffers[RECV][SOUTH];
-          
-          MPI_Sendrecv(send_north, sizex, MPI_DOUBLE, neighbours[NORTH], 0,
-                      recv_south, sizex, MPI_DOUBLE, neighbours[SOUTH], 0,
-                      myCOMM_WORLD, MPI_STATUS_IGNORE);
-
-          MPI_Sendrecv(send_south, sizex, MPI_DOUBLE, neighbours[SOUTH], 1,
-                      recv_north, sizex, MPI_DOUBLE, neighbours[NORTH], 1,
-                      myCOMM_WORLD, MPI_STATUS_IGNORE);
-      }
-
-      // EAST-WEST exchanges (columns need explicit buffers)
-      // Only communicate if at least one neighbor exists
-      if (neighbours[EAST] != MPI_PROC_NULL || neighbours[WEST] != MPI_PROC_NULL) {
-          // Ensure we have valid pointers even if neighbor is NULL
-          double *send_east = (neighbours[EAST] != MPI_PROC_NULL) ? buffers[SEND][EAST] : buffers[SEND][WEST];
-          double *recv_west = (neighbours[WEST] != MPI_PROC_NULL) ? buffers[RECV][WEST] : buffers[RECV][EAST];
-          double *send_west = (neighbours[WEST] != MPI_PROC_NULL) ? buffers[SEND][WEST] : buffers[SEND][EAST];
-          double *recv_east = (neighbours[EAST] != MPI_PROC_NULL) ? buffers[RECV][EAST] : buffers[RECV][WEST];
-          
-          MPI_Sendrecv(send_east, sizey, MPI_DOUBLE, neighbours[EAST], 2,
-                      recv_west, sizey, MPI_DOUBLE, neighbours[WEST], 2,
-                      myCOMM_WORLD, MPI_STATUS_IGNORE);
-
-          MPI_Sendrecv(send_west, sizey, MPI_DOUBLE, neighbours[WEST], 3,
-                      recv_east, sizey, MPI_DOUBLE, neighbours[EAST], 3,
-                      myCOMM_WORLD, MPI_STATUS_IGNORE);
+      //     Using non-blocking Isend / Irecv to enable overlapping communication with computation
+      
+      double comm_start = MPI_Wtime();
+      num_send_requests = 0;
+      num_recv_requests = 0;
+      
+      // Post all receives first
+      // NORTH receive
+      if (neighbours[NORTH] != MPI_PROC_NULL) {
+          MPI_Irecv(buffers[RECV][NORTH], sizex, MPI_DOUBLE, neighbours[NORTH], 1,
+                   myCOMM_WORLD, &recv_requests[num_recv_requests++]);
       }
       
-      // [C] copy the haloes data
-      #define IDX(i, j) ((j) * sizex + (i))
+      // SOUTH receive
+      if (neighbours[SOUTH] != MPI_PROC_NULL) {
+          MPI_Irecv(buffers[RECV][SOUTH], sizex, MPI_DOUBLE, neighbours[SOUTH], 0,
+                   myCOMM_WORLD, &recv_requests[num_recv_requests++]);
+      }
+      
+      // EAST receive
+      if (neighbours[EAST] != MPI_PROC_NULL) {
+          MPI_Irecv(buffers[RECV][EAST], sizey, MPI_DOUBLE, neighbours[EAST], 3,
+                   myCOMM_WORLD, &recv_requests[num_recv_requests++]);
+      }
+      
+      // WEST receive
+      if (neighbours[WEST] != MPI_PROC_NULL) {
+          MPI_Irecv(buffers[RECV][WEST], sizey, MPI_DOUBLE, neighbours[WEST], 2,
+                   myCOMM_WORLD, &recv_requests[num_recv_requests++]);
+      }
+      
+      // Post all sends
+      // NORTH send
+      if (neighbours[NORTH] != MPI_PROC_NULL) {
+          MPI_Isend(buffers[SEND][NORTH], sizex, MPI_DOUBLE, neighbours[NORTH], 0,
+                   myCOMM_WORLD, &send_requests[num_send_requests++]);
+      }
+      
+      // SOUTH send
+      if (neighbours[SOUTH] != MPI_PROC_NULL) {
+          MPI_Isend(buffers[SEND][SOUTH], sizex, MPI_DOUBLE, neighbours[SOUTH], 1,
+                   myCOMM_WORLD, &send_requests[num_send_requests++]);
+      }
+      
+      // EAST send
+      if (neighbours[EAST] != MPI_PROC_NULL) {
+          MPI_Isend(buffers[SEND][EAST], sizey, MPI_DOUBLE, neighbours[EAST], 2,
+                   myCOMM_WORLD, &send_requests[num_send_requests++]);
+      }
+      
+      // WEST send
+      if (neighbours[WEST] != MPI_PROC_NULL) {
+          MPI_Isend(buffers[SEND][WEST], sizey, MPI_DOUBLE, neighbours[WEST], 3,
+                   myCOMM_WORLD, &send_requests[num_send_requests++]);
+      }
+      
+      double comm_end = MPI_Wtime();
+      total_communication_time += (comm_end - comm_start);
 
+      /* --------------------------------------  */
+      /* update grid points (can overlap with communication) */
+      
+      double comp_start = MPI_Wtime();
+      update_plane( periodic, N, &planes[current], &planes[!current] );
+      double comp_end = MPI_Wtime();
+      total_computation_time += (comp_end - comp_start);
+      
+      /* Wait for all communications to complete */
+      double wait_start = MPI_Wtime();
+      
+      // Wait for all receives to complete
+      if (num_recv_requests > 0) {
+          MPI_Waitall(num_recv_requests, recv_requests, MPI_STATUSES_IGNORE);
+      }
+      
+      // [C] Copy halo data from buffers (EAST and WEST)
       // NORTH and SOUTH: data was received directly into halo rows (no copy needed)
+      #define IDX(i, j) ((j) * sizex + (i))
       
-      // EAST and WEST: copy from buffers into halo columns
       if (neighbours[EAST] != MPI_PROC_NULL) {
           for (uint j = 0; j < sizey; j++) {
               data[IDX(sizex - 1, j)] = buffers[RECV][EAST][j];
@@ -175,24 +224,52 @@ int main(int argc, char **argv)
               data[IDX(0, j)] = buffers[RECV][WEST][j];
           }
       }
-
-      #undef IDX
-
-      /* --------------------------------------  */
-      /* update grid points */
       
-      update_plane( periodic, N, &planes[current], &planes[!current] );
+      #undef IDX
+      
+      // Wait for all sends to complete (to ensure buffers can be reused)
+      if (num_send_requests > 0) {
+          MPI_Waitall(num_send_requests, send_requests, MPI_STATUSES_IGNORE);
+      }
+      
+      double wait_end = MPI_Wtime();
+      total_waiting_time += (wait_end - wait_start);
 
       /* output if needed */
       if ( output_energy_stat_perstep )
-	output_energy_stat ( iter, &planes[!current], (iter+1) * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
+	  output_energy_stat ( iter, &planes[!current], (iter+1) * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
 	
+      /* Save grid snapshots at specific iterations for visualization */
+      // Save at iterations: 10, 50, 100, 250, 500, and every 250 iterations after
+      if (iter == 9 || iter == 49 || iter == 99 || iter == 249 || iter == 499 || 
+          (iter >= 250 && (iter+1) % 250 == 0)) {
+          save_grid_snapshot(iter+1, &planes[!current], S, N, Rank, &myCOMM_WORLD);
+      }
+      
       /* swap plane indexes for the new iteration */
       current = !current;
       
     }
   
+  // Save final state
+  save_grid_snapshot(Niterations, &planes[!current], S, N, Rank, &myCOMM_WORLD);
+  
   t1 = MPI_Wtime() - t1;
+
+  // Print timing statistics
+  if (Rank == 0) {
+      printf("\n=== Performance Statistics (Non-blocking Communication) ===\n");
+      printf("Total execution time:    %f seconds\n", t1);
+      printf("Total communication time: %f seconds (%.2f%%)\n", 
+             total_communication_time, 100.0 * total_communication_time / t1);
+      printf("Total computation time:   %f seconds (%.2f%%)\n", 
+             total_computation_time, 100.0 * total_computation_time / t1);
+      printf("Total waiting time:       %f seconds (%.2f%%)\n", 
+             total_waiting_time, 100.0 * total_waiting_time / t1);
+      printf("Overlap efficiency:       %.2f%%\n", 
+             100.0 * (1.0 - (total_communication_time + total_computation_time + total_waiting_time) / t1));
+      printf("============================================================\n\n");
+  }
 
   output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
   
@@ -208,8 +285,6 @@ int main(int argc, char **argv)
    =                                                                        =
    =   routines called within the integration loop                          =
    ========================================================================== */
-
-
 
 
 
@@ -260,7 +335,7 @@ int initialize ( MPI_Comm *Comm,
   int verbose = 0;
   
   // ··································································
-  // set deffault values
+  // set default values
 
   (*S)[_x_]         = 10000;
   (*S)[_y_]         = 10000;
@@ -501,7 +576,7 @@ int initialize ( MPI_Comm *Comm,
   
 
   // ··································································
-  // allocae the heat sources
+  // allocate the heat sources
   //
   ret = initialize_sources( Me, Ntasks, Comm, mysize, *Nsources, Nsources_local, Sources_local );
   
@@ -807,5 +882,134 @@ int output_energy_stat ( int step, plane_t *plane, double budget, int Me, MPI_Co
 	      tot_system_energy / (plane->size[_x_]*plane->size[_y_]) );
     }
   
+  return 0;
+}
+
+
+/* ==========================================================================
+   =                                                                        =
+   =   Grid Snapshot Saving for Visualization                               =
+   ========================================================================== */
+
+int save_grid_snapshot( int step, plane_t *plane, vec2_t S, vec2_t Grid, int Me, MPI_Comm *Comm )
+{
+  int Ntasks;
+  MPI_Comm_size(*Comm, &Ntasks);
+  
+  // Get local grid size (without halo)
+  uint local_sizex = plane->size[_x_];
+  uint local_sizey = plane->size[_y_];
+  
+  // Total grid size with halos
+  uint full_sizex = local_sizex + 2;
+  uint full_sizey = local_sizey + 2;
+  
+  // Extract local data (without halo)
+  double *local_data = (double*)malloc(local_sizex * local_sizey * sizeof(double));
+  
+  #define IDX(i, j) ((j) * full_sizex + (i))
+  for (uint j = 0; j < local_sizey; j++) {
+    for (uint i = 0; i < local_sizex; i++) {
+      local_data[j * local_sizex + i] = plane->data[IDX(i+1, j+1)];
+    }
+  }
+  #undef IDX
+  
+  // Gather all data to rank 0
+  if (Me == 0) {
+    // Allocate full grid
+    double *full_grid = (double*)malloc(S[_x_] * S[_y_] * sizeof(double));
+    
+    // Calculate sizes and displacements for each process
+    int *recvcounts = (int*)malloc(Ntasks * sizeof(int));
+    int *displs = (int*)malloc(Ntasks * sizeof(int));
+    
+    int offset = 0;
+    for (int rank = 0; rank < Ntasks; rank++) {
+      int X = rank % Grid[_x_];
+      int Y = rank / Grid[_x_];
+      
+      uint s = S[_x_] / Grid[_x_];
+      uint r = S[_x_] % Grid[_x_];
+      uint rank_sizex = s + (X < r);
+      
+      s = S[_y_] / Grid[_y_];
+      r = S[_y_] % Grid[_y_];
+      uint rank_sizey = s + (Y < r);
+      
+      recvcounts[rank] = rank_sizex * rank_sizey;
+      displs[rank] = offset;
+      offset += recvcounts[rank];
+    }
+    
+    // Gather data
+    MPI_Gatherv(local_data, local_sizex * local_sizey, MPI_DOUBLE,
+                full_grid, recvcounts, displs, MPI_DOUBLE,
+                0, *Comm);
+    
+    // Reconstruct 2D grid from gathered data
+    double *output_grid = (double*)malloc(S[_x_] * S[_y_] * sizeof(double));
+    
+    offset = 0;
+    for (int rank = 0; rank < Ntasks; rank++) {
+      int X = rank % Grid[_x_];
+      int Y = rank / Grid[_x_];
+      
+      uint s = S[_x_] / Grid[_x_];
+      uint r = S[_x_] % Grid[_x_];
+      uint rank_sizex = s + (X < r);
+      
+      s = S[_y_] / Grid[_y_];
+      r = S[_y_] % Grid[_y_];
+      uint rank_sizey = s + (Y < r);
+      
+      // Calculate offset in global grid
+      uint global_x_offset = 0;
+      uint global_y_offset = 0;
+      for (int i = 0; i < X; i++) {
+        s = S[_x_] / Grid[_x_];
+        r = S[_x_] % Grid[_x_];
+        global_x_offset += s + (i < r);
+      }
+      for (int j = 0; j < Y; j++) {
+        s = S[_y_] / Grid[_y_];
+        r = S[_y_] % Grid[_y_];
+        global_y_offset += s + (j < r);
+      }
+      
+      // Copy data to output grid
+      for (uint j = 0; j < rank_sizey; j++) {
+        for (uint i = 0; i < rank_sizex; i++) {
+          uint global_idx = (global_y_offset + j) * S[_x_] + (global_x_offset + i);
+          output_grid[global_idx] = full_grid[offset + j * rank_sizex + i];
+        }
+      }
+      offset += rank_sizex * rank_sizey;
+    }
+    
+    // Write to binary file
+    char filename[256];
+    snprintf(filename, sizeof(filename), "grid_snapshot_%04d.bin", step);
+    FILE *fp = fopen(filename, "wb");
+    if (fp) {
+      fwrite(&S[_x_], sizeof(uint), 1, fp);
+      fwrite(&S[_y_], sizeof(uint), 1, fp);
+      fwrite(output_grid, sizeof(double), S[_x_] * S[_y_], fp);
+      fclose(fp);
+      printf("Saved snapshot: %s\n", filename);
+    }
+    
+    free(full_grid);
+    free(output_grid);
+    free(recvcounts);
+    free(displs);
+  } else {
+    // Other ranks send their data
+    MPI_Gatherv(local_data, local_sizex * local_sizey, MPI_DOUBLE,
+                NULL, NULL, NULL, MPI_DOUBLE,
+                0, *Comm);
+  }
+  
+  free(local_data);
   return 0;
 }

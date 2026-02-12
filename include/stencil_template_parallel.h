@@ -59,6 +59,13 @@ extern int update_plane ( const int      ,
 extern int get_total_energy( plane_t *,
                              double  * );
 
+extern int save_grid_snapshot( int             ,
+                               plane_t        *,
+                               vec2_t          ,
+                               vec2_t          ,
+                               int             ,
+                               MPI_Comm       * );
+
 int initialize ( MPI_Comm *,
                  int       ,
 		 int       ,
