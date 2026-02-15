@@ -285,13 +285,6 @@ int main(int argc, char **argv)
 
 /* ==========================================================================
    =                                                                        =
-   =   routines called within the integration loop                          =
-   ========================================================================== */
-
-
-
-/* ==========================================================================
-   =                                                                        =
    =   initialization                                                       =
    ========================================================================== */
 
@@ -321,15 +314,15 @@ int initialize ( MPI_Comm *Comm,
 		 vec2_t  *S,                   // the size of the plane
 		 vec2_t  *N,                   // two-uint array defining the MPI tasks' grid
 		 int     *periodic,            // periodic-boundary tag
-		 int     *output_energy_stat,
+		 int     *output_energy_stat,  // whether to output energy statistics at each step
 		 int     *neighbours,          // four-int array that gives back the neighbours of the calling task
 		 int     *Niterations,         // how many iterations
 		 int     *Nsources,            // how many heat sources
-		 int     *Nsources_local,
-		 vec2_t **Sources_local,
+		 int     *Nsources_local,      // how many heat sources are local to the calling task
+		 vec2_t **Sources_local,       // the array of heat sources local to the calling task
 		 double  *energy_per_source,   // how much heat per source
-		 plane_t *planes,
-		 buffers_t *buffers
+		 plane_t *planes,              // the two planes (OLD and NEW) that we will use for the computation
+		 buffers_t *buffers            // the communication buffers
 		 )
 {
   int halt = 0;
@@ -350,17 +343,19 @@ int initialize ( MPI_Comm *Comm,
 
   if ( planes == NULL ) {
     // manage the situation
+    printf("Task %d: planes is NULL\n", Me);
+    return 1;
   }
 
-  planes[OLD].size[0] = 0;
-  planes[OLD].size[1] = 0;
-  planes[NEW].size[0] = 0;
+  planes[OLD].size[0] = 0; // initializing width of the plane to 0
+  planes[OLD].size[1] = 0; // initializing height of the plane to 0 both for old and new planes
+  planes[NEW].size[0] = 0; // in this way we suppose that the grid could be rectangular
   planes[NEW].size[1] = 0;
   
-  for ( int i = 0; i < 4; i++ )
+  for ( int i = 0; i < 4; i++ )  // initializing neighbours to MPI_PROC_NULL, meaning that by default we suppose that there are no neighbours
     neighbours[i] = MPI_PROC_NULL;
 
-  for ( int b = 0; b < 2; b++ )
+  for ( int b = 0; b < 2; b++ )  // initializing communication buffers to NULL
     for ( int d = 0; d < 4; d++ )
       buffers[b][d] = NULL;
   
@@ -399,7 +394,7 @@ int initialize ( MPI_Comm *Comm,
 	    break;
 
 	  case 'h': {
-	    if ( Me == 0 )
+	    if ( Me == 0 )   // only the master task prints the help message
 	      printf( "\nvalid options are ( values btw [] are the default values ):\n"
 		      "-x    x size of the plate [10000]\n"
 		      "-y    y size of the plate [10000]\n"
@@ -435,8 +430,42 @@ int initialize ( MPI_Comm *Comm,
    * here we should check for all the parms being meaningful
    *
    */
+  if ( S[_x_] < 1 || S[_y_] < 1 )
+    {
+      printf("error: invalid grid size\n");
+      return 1;
+    }
 
-  // ...
+  if ( *Niterations < 1 )
+    {
+      printf("error: invalid number of iterations\n");
+      return 1;
+    }
+
+  if ( *Nsources < 1 )
+    {
+      printf("error: invalid number of heat sources\n");
+      return 1;
+    }
+
+  if ( *energy_per_source < 0 )
+    {
+      printf("error: invalid energy per source\n");
+      return 1;
+    }
+
+  if ( *output_energy_stat < 0 )
+    {
+      printf("error: invalid output energy stat flag\n");
+      return 1;
+    }
+
+  if ( *periodic < 0 )
+    {
+      printf("error: invalid periodic flag\n");
+      return 1;
+    }
+  
 
   
   // ··································································
@@ -450,7 +479,11 @@ int initialize ( MPI_Comm *Comm,
    */
 
   vec2_t Grid;
+
+  // the formfactor is the ratio between the two dimensions of the grid, it is used to decide whether to decompose in 1D or 2D
   double formfactor = ((*S)[_x_] >= (*S)[_y_] ? (double)(*S)[_x_]/(*S)[_y_] : (double)(*S)[_y_]/(*S)[_x_] );
+  
+  // if the number of tasks is less than or equal to the formfactor, we decompose in 1D, otherwise we decompose in 2D
   int    dimensions = 2 - (Ntasks <= ((int)formfactor+1) );
 
   
@@ -482,24 +515,28 @@ int initialize ( MPI_Comm *Comm,
   
 
   // ··································································
-  // my cooridnates in the grid of processors
-  //
+  // my coordinates in the grid of processors
+  // Me is the rank of the current calling process
   int X = Me % Grid[_x_];
   int Y = Me / Grid[_x_];
 
   // ··································································
   // find my neighbours
   //
+  // condition ? value_if_true : value_if_false
+  // processes go from 0 to Ntasks-1
 
   if ( Grid[_x_] > 1 )
     {  
       if ( *periodic ) {       
 	neighbours[EAST]  = Y*Grid[_x_] + (Me + 1 ) % Grid[_x_];
 	neighbours[WEST]  = (X%Grid[_x_] > 0 ? Me-1 : (Y+1)*Grid[_x_]-1); }
+  // neighbours[WEST] = (X > 0 ? Me-1 : (Y+1)*Grid[_x_]-1); }
       
       else {
 	neighbours[EAST]  = ( X < Grid[_x_]-1 ? Me+1 : MPI_PROC_NULL );
 	neighbours[WEST]  = ( X > 0 ? (Me-1)%Ntasks : MPI_PROC_NULL ); }  
+  // neighbours[WEST]  = ( X > 0 ? Me-1 : MPI_PROC_NULL ); }
     }
 
   if ( Grid[_y_] > 1 )
@@ -522,6 +559,7 @@ int initialize ( MPI_Comm *Comm,
    * REMIND: the computational domain will be embedded into a frame
    *         that is (sx+2) x (sy+2)
    *         the outern frame will be used for halo communication or
+   *         to apply the boundary conditions
    */
   
   vec2_t mysize;
@@ -627,7 +665,7 @@ uint simple_factorization( uint A, int *Nfactors, uint **factors )
   return 0;
 }
 
-
+// initialize heat sources by randomly assigning them to some MPI tasks
 int initialize_sources( int       Me,
 			int       Ntasks,
 			MPI_Comm *Comm,
@@ -647,6 +685,7 @@ int initialize_sources( int       Me,
 	tasks_with_sources[i] = rand() % Ntasks;
     }
   
+  // broadcast the tasks that have sources to all the processes
   MPI_Bcast( tasks_with_sources, Nsources, MPI_INT, 0, *Comm );
 
   int nlocal = 0;
@@ -703,14 +742,14 @@ int memory_allocate ( const int       *neighbours  ,
       (ii) --- communications
 
       you may need two buffers (one for sending and one for receiving)
-      for each one of your neighnours, that are at most 4:
+      for each one of your neighbours, that are at most 4:
       north, south, east and west.      
 
       To them you need to communicate at most mysizex or mysizey
-      daouble data.
+      double data.
 
       These buffers are indexed by the buffer_ptr pointer so
-      that
+      that 
 
       (*buffers_ptr)[SEND][ {NORTH,...,WEST} ] = .. some memory regions
       (*buffers_ptr)[RECV][ {NORTH,...,WEST} ] = .. some memory regions
@@ -722,12 +761,14 @@ int memory_allocate ( const int       *neighbours  ,
   if (planes_ptr == NULL )
     // an invalid pointer has been passed
     // manage the situation
+    printf("Error: planes_ptr is NULL\n");
     return 1;
 
 
   if (buffers_ptr == NULL )
     // an invalid pointer has been passed
     // manage the situation
+    printf("Error: buffers_ptr is NULL\n");
     return 1;
     
 
@@ -738,13 +779,18 @@ int memory_allocate ( const int       *neighbours  ,
   unsigned int frame_size = (planes_ptr[OLD].size[_x_]+2) * (planes_ptr[OLD].size[_y_]+2);
 
   planes_ptr[OLD].data = (double*)malloc( frame_size * sizeof(double) );
-  if ( planes_ptr[OLD].data == NULL )
-    goto cleanup_and_fail;
+  if ( planes_ptr[OLD].data == NULL ) {
+    printf("Malloc fail: planes_prt[OLD].data is NULL\n");
+    return 1;
+  }
   memset ( planes_ptr[OLD].data, 0, frame_size * sizeof(double) );
 
+
   planes_ptr[NEW].data = (double*)malloc( frame_size * sizeof(double) );
-  if ( planes_ptr[NEW].data == NULL )
-    goto cleanup_and_fail;
+  if ( planes_ptr[NEW].data == NULL ) {
+    printf("Malloc fail: planes_prt[NEW].data is NULL\n");
+    return 1;
+  }
   memset ( planes_ptr[NEW].data, 0, frame_size * sizeof(double) );
 
 
@@ -770,24 +816,32 @@ int memory_allocate ( const int       *neighbours  ,
   if ( neighbours[EAST] != MPI_PROC_NULL )
     {
       buffers_ptr[SEND][EAST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
-      if ( buffers_ptr[SEND][EAST] == NULL )
-        goto cleanup_and_fail;
+      if ( buffers_ptr[SEND][EAST] == NULL ) {
+        printf("Malloc fail: buffers_ptr[SEND][EAST] is NULL\n");
+        return 1;
+      }
       
       buffers_ptr[RECV][EAST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
-      if ( buffers_ptr[RECV][EAST] == NULL )
-        goto cleanup_and_fail;
+      if ( buffers_ptr[RECV][EAST] == NULL ) {
+        printf("Malloc fail: buffers_ptr[RECV][EAST] is NULL\n");
+        return 1;
+      }
     }
 
   // Allocate WEST buffers (both send and receive)
   if ( neighbours[WEST] != MPI_PROC_NULL )
     {
       buffers_ptr[SEND][WEST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
-      if ( buffers_ptr[SEND][WEST] == NULL )
-        goto cleanup_and_fail;
+      if ( buffers_ptr[SEND][WEST] == NULL ) {
+        printf("Malloc fail: buffers_ptr[SEND][WEST] is NULL\n");
+        return 1;
+      }
       
       buffers_ptr[RECV][WEST] = (double*)malloc( (N[_y_] + 2) * sizeof(double) );
-      if ( buffers_ptr[RECV][WEST] == NULL )
-        goto cleanup_and_fail;
+      if ( buffers_ptr[RECV][WEST] == NULL ) {
+        printf("Malloc fail: buffers_ptr[RECV][WEST] is NULL\n");
+        return 1;
+      }
     }
 
   // NORTH and SOUTH buffers will be set to point directly to the data
@@ -801,24 +855,6 @@ int memory_allocate ( const int       *neighbours  ,
 
   
   return 0;
-
-cleanup_and_fail:
-  // Free all previously allocated memory before returning error
-  if ( planes_ptr[OLD].data != NULL )
-    free(planes_ptr[OLD].data);
-  if ( planes_ptr[NEW].data != NULL )
-    free(planes_ptr[NEW].data);
-  
-  if ( buffers_ptr[SEND][EAST] != NULL )
-    free(buffers_ptr[SEND][EAST]);
-  if ( buffers_ptr[RECV][EAST] != NULL )
-    free(buffers_ptr[RECV][EAST]);
-  if ( buffers_ptr[SEND][WEST] != NULL )
-    free(buffers_ptr[SEND][WEST]);
-  if ( buffers_ptr[RECV][WEST] != NULL )
-    free(buffers_ptr[RECV][WEST]);
-  
-  return 1;
 }
 
 
@@ -832,25 +868,27 @@ cleanup_and_fail:
   if ( planes != NULL )
     {
       if ( planes[OLD].data != NULL )
-	free (planes[OLD].data);
+	      free (planes[OLD].data);
       
       if ( planes[NEW].data != NULL )
-	free (planes[NEW].data);
+	      free (planes[NEW].data);
     }
 
   if ( buffers != NULL )
     {
       // Free EAST buffers
       if ( buffers[SEND][EAST] != NULL )
-	free (buffers[SEND][EAST]);
+	      free (buffers[SEND][EAST]);
+        
       if ( buffers[RECV][EAST] != NULL )
-	free (buffers[RECV][EAST]);
+	      free (buffers[RECV][EAST]);
       
       // Free WEST buffers
       if ( buffers[SEND][WEST] != NULL )
-	free (buffers[SEND][WEST]);
+	      free (buffers[SEND][WEST]);
+
       if ( buffers[RECV][WEST] != NULL )
-	free (buffers[RECV][WEST]);
+	      free (buffers[RECV][WEST]);
     }
 
       

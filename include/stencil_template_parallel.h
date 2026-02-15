@@ -149,6 +149,9 @@ inline int inject_energy ( const int      periodic,
 
 
 
+// to do: understand why there is the need of splitting the update in two steps, one for the inner points and one for the boundaries
+// add openmp 
+
 
 
 inline int update_plane ( const int      periodic, 
