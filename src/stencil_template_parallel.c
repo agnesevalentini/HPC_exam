@@ -12,14 +12,14 @@
 
 
 // TODO: add different times of communication and computation with MPI_Wtime() to check the overlap of communication and computation 
-// change from blocking to non blocking and see what happens to the performance
+// change from blocking to non blocking and see what happens to the performance DONE
 
 // ------------------------------------------------------------------
 // ------------------------------------------------------------------
 
 int main(int argc, char **argv)
 {
-  MPI_Comm myCOMM_WORLD;
+  MPI_Comm myCOMM_WORLD;  
   int  Rank, Ntasks;
   int neighbours[4];
 
@@ -42,7 +42,7 @@ int main(int argc, char **argv)
     int level_obtained;
     
     // NOTE: change MPI_FUNNELED if appropriate
-    //
+    // MPI_thread_funneled means that only the main thread will make MPI calls
     MPI_Init_thread( &argc, &argv, MPI_THREAD_FUNNELED, &level_obtained );
     if ( level_obtained < MPI_THREAD_FUNNELED ) {
       printf("MPI_thread level obtained is %d instead of %d\n",
@@ -50,9 +50,9 @@ int main(int argc, char **argv)
       MPI_Finalize();
       exit(1); }
     
-    MPI_Comm_rank(MPI_COMM_WORLD, &Rank);
+    MPI_Comm_rank(MPI_COMM_WORLD, &Rank); 
     MPI_Comm_size(MPI_COMM_WORLD, &Ntasks);
-    MPI_Comm_dup (MPI_COMM_WORLD, &myCOMM_WORLD);
+    MPI_Comm_dup(MPI_COMM_WORLD, &myCOMM_WORLD);
   }
   
   
@@ -76,9 +76,9 @@ int main(int argc, char **argv)
   double t1 = MPI_Wtime();   /* take wall-clock time */
   
   // Timing variables for performance analysis
-  double total_communication_time = 0.0; // total time spent in communication
-  double total_computation_time = 0.0; // total time spent in computation
-  double total_waiting_time = 0.0; // time spent for communication to complete
+  double total_communication_time = 0.0; 
+  double total_computation_time = 0.0; 
+  double total_waiting_time = 0.0; 
   
   // MPI Request arrays for non-blocking communication
   MPI_Request send_requests[4];
@@ -86,7 +86,7 @@ int main(int argc, char **argv)
   int num_send_requests = 0;
   int num_recv_requests = 0;
   
-  // Save initial state (iteration 0)
+  // Save initial state (iteration 0) for the plot of the grid evolution
   save_grid_snapshot(0, &planes[current], S, N, Rank, &myCOMM_WORLD);
   
   for (int iter = 0; iter < Niterations; ++iter)
@@ -136,11 +136,11 @@ int main(int argc, char **argv)
       // [B] perform the halo communications
       //     Using non-blocking Isend / Irecv to enable overlapping communication with computation
       
-      double comm_start = MPI_Wtime();
+      double communication_start = MPI_Wtime();  // here we set the start time for communication
       num_send_requests = 0;
       num_recv_requests = 0;
       
-      // Post all receives first
+      // Post all receives first 
       // NORTH receive
       if (neighbours[NORTH] != MPI_PROC_NULL) {
           MPI_Irecv(buffers[RECV][NORTH], sizex, MPI_DOUBLE, neighbours[NORTH], 1,
@@ -165,7 +165,7 @@ int main(int argc, char **argv)
                    myCOMM_WORLD, &recv_requests[num_recv_requests++]);
       }
       
-      // Post all sends
+      // Post all sends after
       // NORTH send
       if (neighbours[NORTH] != MPI_PROC_NULL) {
           MPI_Isend(buffers[SEND][NORTH], sizex, MPI_DOUBLE, neighbours[NORTH], 0,
@@ -190,19 +190,21 @@ int main(int argc, char **argv)
                    myCOMM_WORLD, &send_requests[num_send_requests++]);
       }
       
-      double comm_end = MPI_Wtime();
-      total_communication_time += (comm_end - comm_start);
+      double communication_end = MPI_Wtime();
+      total_communication_time += (communication_end - communication_start);
 
       /* --------------------------------------  */
       /* update grid points (can overlap with communication) */
       
-      double comp_start = MPI_Wtime();
+      double computation_start = MPI_Wtime(); // start time for computation of the stencil computation
       update_plane( periodic, N, &planes[current], &planes[!current] );
-      double comp_end = MPI_Wtime();
-      total_computation_time += (comp_end - comp_start);
+      double computation_end = MPI_Wtime();
+      total_computation_time += (computation_end - computation_start);
       
+
+
       /* Wait for all communications to complete */
-      double wait_start = MPI_Wtime();
+      double waiting_start = MPI_Wtime();
       
       // Wait for all receives to complete
       if (num_recv_requests > 0) {
@@ -232,8 +234,8 @@ int main(int argc, char **argv)
           MPI_Waitall(num_send_requests, send_requests, MPI_STATUSES_IGNORE);
       }
       
-      double wait_end = MPI_Wtime();
-      total_waiting_time += (wait_end - wait_start);
+      double waiting_end = MPI_Wtime();
+      total_waiting_time += (waiting_end - waiting_start);
 
       /* output if needed */
       if ( output_energy_stat_perstep )
@@ -254,9 +256,9 @@ int main(int argc, char **argv)
   // Save final state
   save_grid_snapshot(Niterations, &planes[!current], S, N, Rank, &myCOMM_WORLD);
   
-  t1 = MPI_Wtime() - t1;
+  t1 = MPI_Wtime() - t1; // compute total execution time
 
-  // Print timing statistics
+  // Print timing statistics to check the overlap of communication and computation
   if (Rank == 0) {
       printf("\n=== Performance Statistics (Non-blocking Communication) ===\n");
       printf("Total execution time:    %f seconds\n", t1);
@@ -273,10 +275,10 @@ int main(int argc, char **argv)
 
   output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
   
-  memory_release( buffers, planes );
+  memory_release( buffers, planes ); // free all allocated memory
   
-  
-  MPI_Finalize();
+   
+  MPI_Finalize();   // finalize MPI environment
   return 0;
 }
 
@@ -757,7 +759,7 @@ int memory_allocate ( const int       *neighbours  ,
   // correct positions
   //
 
-  // or, if you preer, just go on and allocate buffers
+  // or, if you prefer, just go on and allocate buffers
   // also for north and south communications
 
   // ··················································
