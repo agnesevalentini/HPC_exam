@@ -1,9 +1,14 @@
 
-
 /*
  *
  *  mysizex   :   local x-extendion of your patch
  *  mysizey   :   local y-extension of your patch
+ *
+ *  Optimization Strategy:
+ *  - Split stencil update into internal and boundary nodes
+ *  - Internal nodes are computed while MPI communication is in transit
+ *  - Boundary nodes are computed after halo exchange completes
+ *  - This overlaps computation with communication for better performance
  *
  */
 
@@ -11,8 +16,11 @@
 #include "stencil_template_parallel.h"
 
 
-// TODO: add different times of communication and computation with MPI_Wtime() to check the overlap of communication and computation 
-// change from blocking to non blocking and see what happens to the performance DONE
+// Communication-computation overlap optimization implemented:
+// 1. Start non-blocking MPI_Isend/Irecv for halo exchange
+// 2. Compute internal nodes (don't need neighbor data) - OVERLAPS with communication
+// 3. Wait for halo data to arrive (MPI_Waitall on receives)
+// 4. Compute boundary nodes (now have fresh halo data)
 
 // ------------------------------------------------------------------
 // ------------------------------------------------------------------
@@ -70,6 +78,17 @@ int main(int argc, char **argv)
       MPI_Finalize();
       return 0;
     }
+  
+  
+  /* ============================================================
+   * NUMA Optimization: Touch-by-all first-touch policy
+   * Each OpenMP thread touches its portion of memory using
+   * the same parallel decomposition as the computation loops.
+   * This ensures pages are allocated on the NUMA node closest
+   * to the thread that will use them, minimizing remote accesses.
+   * ============================================================ */
+  initialize_first_touch( &planes[OLD] );
+  initialize_first_touch( &planes[NEW] );
   
   
   int current = OLD;
@@ -194,16 +213,17 @@ int main(int argc, char **argv)
       total_communication_time += (communication_end - communication_start);
 
       /* --------------------------------------  */
-      /* update grid points (can overlap with communication) */
+      /* STEP 1: Update INTERNAL grid points (overlaps with communication) */
+      /* Internal points don't depend on halo data, so compute them while data is in transit */
       
-      double computation_start = MPI_Wtime(); // start time for computation of the stencil computation
-      update_plane( periodic, N, &planes[current], &planes[!current] );
-      double computation_end = MPI_Wtime();
-      total_computation_time += (computation_end - computation_start);
+      double internal_start = MPI_Wtime();
+      update_plane_internal( N, &planes[current], &planes[!current] );
+      double internal_end = MPI_Wtime();
+      total_computation_time += (internal_end - internal_start);
       
-
-
-      /* Wait for all communications to complete */
+      /* --------------------------------------  */
+      /* STEP 2: Wait for halo data to arrive */
+      
       double waiting_start = MPI_Wtime();
       
       // Wait for all receives to complete
@@ -229,13 +249,22 @@ int main(int argc, char **argv)
       
       #undef IDX
       
-      // Wait for all sends to complete (to ensure buffers can be reused)
+      double waiting_end = MPI_Wtime();
+      total_waiting_time += (waiting_end - waiting_start);
+      
+      /* --------------------------------------  */
+      /* STEP 3: Update BOUNDARY grid points (requires fresh halo data) */
+      
+      double boundary_start = MPI_Wtime();
+      update_plane_boundary( periodic, N, &planes[current], &planes[!current] );
+      double boundary_end = MPI_Wtime();
+      total_computation_time += (boundary_end - boundary_start);
+      
+      /* Wait for all sends to complete (to ensure buffers can be reused) */
       if (num_send_requests > 0) {
           MPI_Waitall(num_send_requests, send_requests, MPI_STATUSES_IGNORE);
       }
-      
-      double waiting_end = MPI_Wtime();
-      total_waiting_time += (waiting_end - waiting_start);
+
 
       /* output if needed */
       if ( output_energy_stat_perstep )
@@ -758,19 +787,19 @@ int memory_allocate ( const int       *neighbours  ,
       
      */
 
-  if (planes_ptr == NULL )
+  if (planes_ptr == NULL ) {
     // an invalid pointer has been passed
     // manage the situation
     printf("Error: planes_ptr is NULL\n");
     return 1;
+  }
 
-
-  if (buffers_ptr == NULL )
+  if (buffers_ptr == NULL ) {
     // an invalid pointer has been passed
     // manage the situation
     printf("Error: buffers_ptr is NULL\n");
     return 1;
-    
+  }
 
   // ··················································
   // allocate memory for data
@@ -942,7 +971,7 @@ int save_grid_snapshot( int step, plane_t *plane, vec2_t S, vec2_t Grid, int Me,
   
   // Total grid size with halos
   uint full_sizex = local_sizex + 2;
-  uint full_sizey = local_sizey + 2;
+  //uint full_sizey = local_sizey + 2;
   
   // Extract local data (without halo)
   double *local_data = (double*)malloc(local_sizex * local_sizey * sizeof(double));
@@ -1036,7 +1065,7 @@ int save_grid_snapshot( int step, plane_t *plane, vec2_t S, vec2_t Grid, int Me,
       fwrite(&S[_y_], sizeof(uint), 1, fp);
       fwrite(output_grid, sizeof(double), S[_x_] * S[_y_], fp);
       fclose(fp);
-      printf("Saved snapshot: %s\n", filename);
+      //printf("Saved snapshot: %s\n", filename);
     }
     
     free(full_grid);
