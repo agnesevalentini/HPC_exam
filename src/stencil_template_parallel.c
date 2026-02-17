@@ -85,7 +85,7 @@ int main(int argc, char **argv)
    * Each OpenMP thread touches its portion of memory using
    * the same parallel decomposition as the computation loops.
    * This ensures pages are allocated on the NUMA node closest
-   * to the thread that will use them, minimizing remote accesses.
+   * to the thread that will use them, minimizing remote accesses
    * ============================================================ */
   initialize_first_touch( &planes[OLD] );
   initialize_first_touch( &planes[NEW] );
@@ -97,7 +97,10 @@ int main(int argc, char **argv)
   // Timing variables for performance analysis
   double total_communication_time = 0.0; 
   double total_computation_time = 0.0; 
-  double total_waiting_time = 0.0; 
+  double total_waiting_time = 0.0;
+  double total_energy_injection_time = 0.0;
+  double total_snapshot_time = 0.0;
+  double total_energy_stat_time = 0.0;
   
   // MPI Request arrays for non-blocking communication
   MPI_Request send_requests[4];
@@ -106,13 +109,17 @@ int main(int argc, char **argv)
   int num_recv_requests = 0;
   
   // Save initial state (iteration 0) for the plot of the grid evolution
-  save_grid_snapshot(0, &planes[current], S, N, Rank, &myCOMM_WORLD);
+  double snapshot_start = MPI_Wtime();
+  //save_grid_snapshot(0, &planes[current], S, N, Rank, &myCOMM_WORLD);
+  total_snapshot_time += MPI_Wtime() - snapshot_start;
   
   for (int iter = 0; iter < Niterations; ++iter)
     
     {
       /* new energy from sources */
+      double energy_start = MPI_Wtime();
       inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, &planes[current], N );
+      total_energy_injection_time += MPI_Wtime() - energy_start;
 
 
       /* -------------------------------------- */
@@ -267,15 +274,20 @@ int main(int argc, char **argv)
 
 
       /* output if needed */
-      if ( output_energy_stat_perstep )
+      if ( output_energy_stat_perstep ) {
+          double stat_start = MPI_Wtime();
 	  output_energy_stat ( iter, &planes[!current], (iter+1) * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
-	
+          total_energy_stat_time += MPI_Wtime() - stat_start;
+      }
+      
       /* Save grid snapshots at specific iterations for visualization */
       // Save at iterations: 10, 50, 100, 250, 500, and every 250 iterations after
       if (iter == 9 || iter == 49 || iter == 99 || iter == 249 || iter == 499 || 
           (iter >= 250 && (iter+1) % 250 == 0)) {
-          save_grid_snapshot(iter+1, &planes[!current], S, N, Rank, &myCOMM_WORLD);
-      }
+          snapshot_start = MPI_Wtime();
+          //save_grid_snapshot(iter+1, &planes[!current], S, N, Rank, &myCOMM_WORLD);
+          total_snapshot_time += MPI_Wtime() - snapshot_start;
+      } 
       
       /* swap plane indexes for the new iteration */
       current = !current;
@@ -283,26 +295,53 @@ int main(int argc, char **argv)
     }
   
   // Save final state
-  save_grid_snapshot(Niterations, &planes[!current], S, N, Rank, &myCOMM_WORLD);
+  snapshot_start = MPI_Wtime();
+  //save_grid_snapshot(Niterations, &planes[!current], S, N, Rank, &myCOMM_WORLD);
+  total_snapshot_time += MPI_Wtime() - snapshot_start;
   
   t1 = MPI_Wtime() - t1; // compute total execution time
 
+  // Final energy statistics
+  double final_stat_start = MPI_Wtime();
+  output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
+  total_energy_stat_time += MPI_Wtime() - final_stat_start;
+
+  
   // Print timing statistics to check the overlap of communication and computation
   if (Rank == 0) {
-      printf("\n=== Performance Statistics (Non-blocking Communication) ===\n");
-      printf("Total execution time:    %f seconds\n", t1);
-      printf("Total communication time: %f seconds (%.2f%%)\n", 
-             total_communication_time, 100.0 * total_communication_time / t1);
-      printf("Total computation time:   %f seconds (%.2f%%)\n", 
+      printf("\n=== Performance Statistics (Communication-Computation Overlap) ===\n");
+      fflush(stdout);
+      printf("Total execution time:      %f seconds (100.00%%)\n", t1);
+      printf("-----------------------------------------------------------\n");
+      printf("Computation time:          %f seconds (%.2f%%)\n", 
              total_computation_time, 100.0 * total_computation_time / t1);
-      printf("Total waiting time:       %f seconds (%.2f%%)\n", 
+      printf("  Communication setup:     %f seconds (%.2f%%)\n", 
+             total_communication_time, 100.0 * total_communication_time / t1);
+      printf("  Waiting for halos:       %f seconds (%.2f%%)\n", 
              total_waiting_time, 100.0 * total_waiting_time / t1);
-      printf("Overlap efficiency:       %.2f%%\n", 
-             100.0 * (1.0 - (total_communication_time + total_computation_time + total_waiting_time) / t1));
-      printf("============================================================\n\n");
+      printf("Energy injection:          %f seconds (%.2f%%)\n", 
+             total_energy_injection_time, 100.0 * total_energy_injection_time / t1);
+      printf("Grid snapshots (I/O):      %f seconds (%.2f%%)\n", 
+             total_snapshot_time, 100.0 * total_snapshot_time / t1);
+      printf("Energy statistics:         %f seconds (%.2f%%)\n", 
+             total_energy_stat_time, 100.0 * total_energy_stat_time / t1);
+      printf("-----------------------------------------------------------\n");
+      
+      double accounted = total_computation_time + total_communication_time + 
+                        total_waiting_time + total_energy_injection_time + 
+                        total_snapshot_time + total_energy_stat_time;
+      double unaccounted = t1 - accounted;
+      
+      printf("Accounted time:            %f seconds (%.2f%%)\n", 
+             accounted, 100.0 * accounted / t1);
+      printf("Other overhead:            %f seconds (%.2f%%)\n", 
+             unaccounted, 100.0 * unaccounted / t1);
+      printf("-----------------------------------------------------------\n");
+      printf("Overlap efficiency:        %.2f%%\n", 
+             100.0 * total_computation_time / (total_computation_time + total_waiting_time + total_communication_time));
+      printf("===============================================================\n\n");
+      fflush(stdout);
   }
-
-  output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
   
   memory_release( buffers, planes ); // free all allocated memory
   
@@ -459,7 +498,7 @@ int initialize ( MPI_Comm *Comm,
    * here we should check for all the parms being meaningful
    *
    */
-  if ( S[_x_] < 1 || S[_y_] < 1 )
+  if ( (*S)[_x_] < 1 || (*S)[_y_] < 1 )
     {
       printf("error: invalid grid size\n");
       return 1;
@@ -1082,3 +1121,4 @@ int save_grid_snapshot( int step, plane_t *plane, vec2_t S, vec2_t Grid, int Me,
   free(local_data);
   return 0;
 }
+

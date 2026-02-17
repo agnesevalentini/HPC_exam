@@ -236,7 +236,7 @@ inline int update_plane_boundary (
     #pragma omp parallel
     {
         // Top & bottom rows (process entire width including corners)
-        #pragma omp for schedule(static)  
+        #pragma omp for schedule(static)  // static schedule for regular grid
         for (uint i = 1; i <= xsize; i++) {
             // top row j=1
             double result1 = old[ IDX(i, j_top) ] * alpha;
