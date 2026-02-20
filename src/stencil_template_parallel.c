@@ -88,8 +88,8 @@ int main(int argc, char **argv)
    * to the thread that will use them, minimizing remote accesses
    * ============================================================ */
   // dunno if we should use it
-  initialize_first_touch( &planes[OLD] );
-  initialize_first_touch( &planes[NEW] );
+  //initialize_first_touch( &planes[OLD] );
+  //initialize_first_touch( &planes[NEW] );
   
   
   int current = OLD;
@@ -304,8 +304,11 @@ int main(int argc, char **argv)
 
   output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
 
-  double computation_time_mean, communication_time_mean, waiting_time_mean, energy_injection_time_mean;
+  memory_release( buffers, planes ); // free all allocated memory
+  
+  double total_time_mean, computation_time_mean, communication_time_mean, waiting_time_mean, energy_injection_time_mean;
 
+  MPI_Reduce(&t1, &total_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
   MPI_Reduce(&total_computation_time, &computation_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
   MPI_Reduce(&total_communication_time, &communication_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
   MPI_Reduce(&total_waiting_time, &waiting_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
@@ -314,39 +317,34 @@ int main(int argc, char **argv)
   // add the code to print the time to post process them
   if (Rank == 0 || Ntasks == 1) {
     const char *job_name = getenv("JOB_NAME");
+
+    const char *output_dir = "output";
+      // Build full path
+    char filename[512];
+    snprintf(filename, sizeof(filename), "%s/%s.csv", output_dir, job_name);
+
+    FILE *f = fopen(filename, "w");
+      if (!f) {
+          perror("fopen");
+          exit(1);
+      }
+
+      fprintf(f,"Mean_total_time,Mean_Computation_time,Mean_Communication_time,Mean_Waitall_time,Grid_x,Grid_y,N_iterations\n");
+      fprintf(f,"%f,%f,%f,%f,%u,%u,%d\n",
+              total_time_mean/Ntasks,
+              computation_time_mean/Ntasks,
+              communication_time_mean/Ntasks,
+              waiting_time_mean/Ntasks,
+              S[_x_],
+              S[_y_],
+              Niterations);
+      fclose(f);
+
     
   }
 
+  
 
-  /*
-  // Print timing statistics to check the overlap of communication and computation
-  if (Rank == 0) {
-      printf("\n=== Performance Statistics (Communication-Computation Overlap) ===\n");
-      fflush(stdout);
-      printf("Total execution time:      %f seconds (100.00%%)\n", t1);
-      printf("-----------------------------------------------------------\n");
-      printf("Computation time:          %f seconds (%.2f%%)\n", 
-             total_computation_time, 100.0 * total_computation_time / t1);
-      printf("  Communication setup:     %f seconds (%.2f%%)\n", 
-             total_communication_time, 100.0 * total_communication_time / t1);
-      printf("  Waiting for halos:       %f seconds (%.2f%%)\n", 
-             total_waiting_time, 100.0 * total_waiting_time / t1);
-      printf("Energy injection:          %f seconds (%.2f%%)\n", 
-             total_energy_injection_time, 100.0 * total_energy_injection_time / t1);
-      //printf("Grid snapshots (I/O):      %f seconds (%.2f%%)\n", 
-      //       total_snapshot_time, 100.0 * total_snapshot_time / t1);
-      printf("Energy statistics:         %f seconds (%.2f%%)\n", 
-             total_energy_stat_time, 100.0 * total_energy_stat_time / t1);
-      printf("-----------------------------------------------------------\n");
-      printf("Overlap efficiency:        %.2f%%\n", 
-             100.0 * total_computation_time / (total_computation_time + total_waiting_time + total_communication_time));
-      printf("===============================================================\n\n");
-      fflush(stdout);
-  }
-  */
-  
-  memory_release( buffers, planes ); // free all allocated memory
-  
    
   MPI_Finalize();   // finalize MPI environment
   return 0;

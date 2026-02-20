@@ -182,7 +182,7 @@ inline int update_plane_internal (
     double * restrict new = newplane->data;
     
     // Optimized stencil constants
-    double alpha = 0.5;
+    double alpha = 0.6;
     double weight = (1.0 - alpha) * 0.25;
     
     // Process internal nodes only (not on any boundary)
@@ -225,7 +225,7 @@ inline int update_plane_boundary (
     double * restrict new = newplane->data;
 
     // Optimized stencil constants
-    double alpha = 0.5;
+    double alpha = 0.6;
     double weight = (1.0 - alpha) * 0.25;
     
     uint j_top = 1;
