@@ -308,6 +308,8 @@ int main(int argc, char **argv)
   
   double total_time_mean, computation_time_mean, communication_time_mean, waiting_time_mean, energy_injection_time_mean;
 
+
+  // consider the mean for each time variable across all tasks
   MPI_Reduce(&t1, &total_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
   MPI_Reduce(&total_computation_time, &computation_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
   MPI_Reduce(&total_communication_time, &communication_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
@@ -399,14 +401,14 @@ int initialize ( MPI_Comm *Comm,
   
   // ··································································
   // set default values
-
-  (*S)[_x_]         = 10000;
-  (*S)[_y_]         = 10000;
+  // if we don't add any other option, the program will run these values
+  (*S)[_x_]         = 15000;  // both set to 10000 before
+  (*S)[_y_]         = 15000;  // try with a bigger grid to see the scaling
   *periodic         = 0;
   *Nsources         = 4;
   *Nsources_local   = 0;
   *Sources_local    = NULL;
-  *Niterations      = 1000;
+  *Niterations      = 1000;  // could be okay
   *energy_per_source = 1.0;
 
   if ( planes == NULL ) {

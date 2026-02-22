@@ -3,3 +3,14 @@ Splitting computation between internal and boundary nodes because we want to opt
 2. Compute internal nodes (while MPI transfers happen in background)
 3. Wait for MPI communication to finish
 4. Compute boundary nodes (now that neighbor data is available)
+
+
+
+Commands to login into Leonardo
+step ssh login agnes.valentini@gmail.com --provisioner cineca-hpc
+Manually delete all the keys for Leonardo present in .ssh/known_hosts
+ssh avalent5@login.leonardo.cineca.it and press yes to add the key
+
+Copy the data with scp on Leonardo and fix directories
+
+

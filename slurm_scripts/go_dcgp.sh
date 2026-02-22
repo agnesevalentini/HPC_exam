@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #SBATCH --mem=0
 #SBATCH --partition dcgp_usr_prod
