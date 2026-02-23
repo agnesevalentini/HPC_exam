@@ -1,0 +1,2 @@
+Mean_total_time,Mean_Computation_time,Mean_Communication_time,Mean_Waitall_time,Grid_x,Grid_y,N_iterations
+20.405386,18.916456,0.014867,0.817654,20000,20000,1000

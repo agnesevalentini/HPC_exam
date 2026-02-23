@@ -2,13 +2,13 @@
 
 echo "Weak scaling: multinode scalability study with constant workload per resource"
 
-N_STEPS=500        
-TASKS_PER_NODE=8   
+N_STEPS=500
+TASKS_PER_NODE=8
 OMP_THREADS=14
 CPUS_PER_TASK=${OMP_THREADS}
 LOCAL_SIZE=4000
 GRID_SIZE_X=${LOCAL_SIZE}
-GRID_SIZE_Y=${LOCAL_SIZE}          
+GRID_SIZE_Y=${LOCAL_SIZE}
 
 for NODES in 1 2 4 8 16; do
     TOTAL_TASKS=$((NODES * TASKS_PER_NODE))
@@ -27,7 +27,7 @@ for NODES in 1 2 4 8 16; do
     elif [ $NODES -eq 16 ]; then
         GRID_SIZE_X=$(( LOCAL_SIZE * 4 ))
         GRID_SIZE_Y=$(( LOCAL_SIZE * 4 ))
-    fi    
+    fi
 
     JOB_NAME="weak_scale_${NODES}n_${TOTAL_TASKS}t"
 

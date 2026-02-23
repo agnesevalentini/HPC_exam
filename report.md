@@ -14,3 +14,12 @@ ssh avalent5@login.leonardo.cineca.it and press yes to add the key
 Copy the data with scp on Leonardo and fix directories
 
 
+Strong Scaling (15000×15000 fixed):
+
+Tests: "How fast can I solve THIS specific problem with more resources?"
+Metric: Speedup = Time(1 node) / Time(N nodes)
+
+Weak Scaling (variable grid):
+Here it does not matter the dimension of the problem but just how we manage the scaling, in a way that the ratio dimension of grid^2 / number of nodes remains constant.
+Tests: "Can I maintain efficiency when solving proportionally larger problems?"
+Metric: Parallel efficiency = Time(1 node) / Time(N nodes) (should ideally stay ~1.0)
