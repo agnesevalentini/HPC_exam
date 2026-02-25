@@ -80,17 +80,6 @@ int main(int argc, char **argv)
     }
   
   
-  /* ============================================================
-   * NUMA Optimization: Touch-by-all first-touch policy
-   * Each OpenMP thread touches its portion of memory using
-   * the same parallel decomposition as the computation loops.
-   * This ensures pages are allocated on the NUMA node closest
-   * to the thread that will use them, minimizing remote accesses
-   * ============================================================ */
-  // dunno if we should use it
-  //initialize_first_touch( &planes[OLD] );
-  //initialize_first_touch( &planes[NEW] );
-  
   
   int current = OLD;
   double t1 = MPI_Wtime();   /* take wall-clock time */
@@ -123,6 +112,7 @@ int main(int argc, char **argv)
       /* -------------------------------------- */
 
       // [A] fill the buffers, and/or make the buffers' pointers pointing to the correct position
+      // here we use the buffers both as actual buffers (for EAST and WEST) and as pointers to the data (for NORTH and SOUTH)
       uint sizex = planes[current].size[_x_] + 2;
       uint sizey = planes[current].size[_y_] + 2;
       double *data = planes[current].data;
@@ -162,7 +152,8 @@ int main(int argc, char **argv)
       // [B] perform the halo communications
       //     Using non-blocking Isend / Irecv to enable overlapping communication with computation
       
-      double communication_start = MPI_Wtime();  // here we set the start time for communication
+      // this is actually not the communication time but the time used to post the non-blocking requests
+      double communication_start = MPI_Wtime(); 
       num_send_requests = 0;
       num_recv_requests = 0;
       
@@ -231,6 +222,7 @@ int main(int argc, char **argv)
       /* --------------------------------------  */
       /* STEP 2: Wait for halo data to arrive */
       
+      // this is actually the communication time 
       double waiting_start = MPI_Wtime();
       
       // Wait for all receives to complete
@@ -845,12 +837,12 @@ int memory_allocate ( const int       *neighbours  ,
   // ··················································
   // allocate memory for data
   // we allocate the space needed for the plane plus a contour frame
-  // that will contains data form neighbouring MPI tasks
+  // that will contains data from neighbouring MPI tasks
   unsigned int frame_size = (planes_ptr[OLD].size[_x_]+2) * (planes_ptr[OLD].size[_y_]+2);
 
   planes_ptr[OLD].data = (double*)malloc( frame_size * sizeof(double) );
   if ( planes_ptr[OLD].data == NULL ) {
-    printf("Malloc fail: planes_prt[OLD].data is NULL\n");
+    printf("Malloc fail: planes_ptr[OLD].data is NULL\n");
     return 1;
   }
   memset ( planes_ptr[OLD].data, 0, frame_size * sizeof(double) );

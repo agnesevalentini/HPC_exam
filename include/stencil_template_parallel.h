@@ -297,7 +297,7 @@ inline int update_plane_boundary (
     return 0;
 }
 
-/* original version 
+/* original version that doesn't split the plane into internal and boundary
 inline int update_plane ( const int      periodic, 
                           const vec2_t   N,
                           const plane_t *oldplane,
@@ -349,71 +349,3 @@ inline int get_total_energy( plane_t *plane,
     *energy = (double)totenergy;
     return 0;
 }
-
-
-
-// Touch-by-all policy for NUMA optimization
-// Each thread in the parallel region touches (writes to) its portion of memory
-// using the SAME parallel decomposition as the computation loops.
-// This triggers first-touch allocation on the appropriate NUMA node.
-inline int initialize_first_touch( plane_t *plane )
-{
-    const uint register fxsize = plane->size[_x_] + 2;
-    const uint register xsize = plane->size[_x_];
-    const uint register ysize = plane->size[_y_];
-    
-    double * restrict data = plane->data;
-    
-   #define IDX( i, j ) ( (j)*fxsize + (i) )
-    
-    // Touch memory using the SAME pattern as the computation
-    // This ensures NUMA-local allocation for maximum performance
-    
-    #pragma omp parallel
-    {
-        // Touch internal nodes (same pattern as update_plane_internal)
-        #pragma omp for schedule(static)
-        for (uint j = 2; j < ysize; j++) {
-            for (uint i = 2; i < xsize; i++) {
-                data[ IDX(i, j) ] = 0.0;
-            }
-        }
-        
-        // Touch boundary nodes (same pattern as update_plane_boundary)
-        // Top & bottom rows (including corners)
-        #pragma omp for schedule(static)
-        for (uint i = 1; i <= xsize; i++) {
-            data[ IDX(i, 1) ] = 0.0;        // top row
-            data[ IDX(i, ysize) ] = 0.0;    // bottom row
-        }
-        
-        // Left & right columns (excluding corners to avoid duplicate touches)
-        #pragma omp for schedule(static)
-        for (uint j = 2; j < ysize; j++) {
-            data[ IDX(1, j) ] = 0.0;        // left column
-            data[ IDX(xsize, j) ] = 0.0;    // right column
-        }
-        
-        // Touch halo regions (these are shared by all threads typically)
-        #pragma omp for schedule(static)
-        for (uint i = 0; i < fxsize; i++) {
-            data[ IDX(i, 0) ] = 0.0;        // top halo row
-            data[ IDX(i, ysize+1) ] = 0.0;  // bottom halo row
-        }
-        
-        // Left and right halo columns
-        #pragma omp single
-        {
-            for (uint j = 0; j <= ysize+1; j++) {
-                data[ IDX(0, j) ] = 0.0;           // left halo
-                data[ IDX(xsize+1, j) ] = 0.0;     // right halo
-            }
-        }
-    }
-    
-   #undef IDX
-    
-    return 0;
-}
-
-
