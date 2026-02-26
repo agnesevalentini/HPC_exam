@@ -56,14 +56,15 @@ int main(int argc, char **argv)
       printf("MPI_thread level obtained is %d instead of %d\n",
 	     level_obtained, MPI_THREAD_FUNNELED );
       MPI_Finalize();
-      exit(1); }
+      exit(1);
+     }
     
     MPI_Comm_rank(MPI_COMM_WORLD, &Rank); 
     MPI_Comm_size(MPI_COMM_WORLD, &Ntasks);
     MPI_Comm_dup(MPI_COMM_WORLD, &myCOMM_WORLD);
   }
-  
-  
+
+
   /* argument checking and setting */
   int ret = initialize ( &myCOMM_WORLD, Rank, Ntasks, argc, argv, &S, &N, &periodic, &output_energy_stat_perstep,
 			 neighbours, &Niterations,
@@ -692,7 +693,6 @@ uint simple_factorization( uint A, int *Nfactors, uint **factors )
  * rought factorization;
  * assumes that A is small, of the order of <~ 10^5 max,
  * since it represents the number of tasks
- #
  */
 {
   int N = 0;
