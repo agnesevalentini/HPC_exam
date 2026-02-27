@@ -294,6 +294,8 @@ int main(int argc, char **argv)
   //total_snapshot_time += MPI_Wtime() - snapshot_start;
 
   t1 = MPI_Wtime() - t1; // compute total execution time
+  
+  //MPI_Waitall(0, NULL, MPI_STATUSES_IGNORE); // ensure all communication is complete before final timing and output
 
   output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
 
