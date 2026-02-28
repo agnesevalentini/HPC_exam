@@ -339,9 +339,11 @@ inline int get_total_energy( plane_t *plane,
     // for instance
     // #pragma GCC unroll 4
     #pragma omp parallel for collapse(2) reduction(+:totenergy) 
-    for ( int j = 1; j <= ysize; j++ )
-        for ( int i = 1; i <= xsize; i++ )
+    for ( int j = 1; j <= ysize; j++ ) {
+        for ( int i = 1; i <= xsize; i++ ) {
             totenergy += data[ IDX(i, j) ];
+        }
+    }
 
     
    #undef IDX

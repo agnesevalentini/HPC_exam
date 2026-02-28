@@ -150,8 +150,8 @@ inline int update_plane ( const int     periodic,
                 // always conserve the smoothed quantity
                 // alpha here mimics how much "easily" the heat
                 // travels
+                // of alpha = 0.6 the scheme is stable due to CFL condition
                 
-                // this is NOT the same as the slides, alpha is not the diffusivity
                 double alpha = 0.6;
                 double result = old[ IDX(i,j) ] *alpha;
                 double sum_i  = (old[IDX(i-1, j)] + old[IDX(i+1, j)]) / 4.0 * (1-alpha);
