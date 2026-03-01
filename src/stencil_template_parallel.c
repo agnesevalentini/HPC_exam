@@ -312,6 +312,8 @@ int main(int argc, char **argv)
   MPI_Reduce(&total_energy_injection_time, &energy_injection_time_mean, 1, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
 
   // add the code to print the time to post process them
+  // MPI RUN == Ntasks > 1
+  // gcc == Ntasks = 1
   if (Rank == 0 || Ntasks == 1) {
     const char *job_name = getenv("JOB_NAME");
 
